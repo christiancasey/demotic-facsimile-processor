@@ -1,0 +1,233 @@
+
+
+%% Script Initialization
+switchToCD;
+clc;	clear;	close all;	
+figure; figure(gcf);	whitebg('w');	colormap jet;
+plottools('off')
+
+% Supress the warning raised by imshow() because why does this even exist?
+warning('off','images:imshow:magnificationMustBeFitForDockedFigure');
+set(0,'DefaultFigureWindowStyle','docked');
+
+
+
+%% Compare manual counts
+
+vCounts = [ 45 162 73 17 12 81 3 6 1 42 18 28 13 9 8 6 27 3 21 2 3 3 10 1 10 11 2 1 1 1 4 4 3 1 5 3 2 6 1 1 1 1 1 1 1 1 1 3 1 1 1 10 1 1 2 1 3 1 ];
+vCounts = vCounts';
+vCounts = sort(vCounts, 'descend');
+sum(vCounts)
+
+
+%% Load Classifier Data
+
+load classifier_data;
+
+nGlyphs = size(vGlyphs,1);
+
+	% Return both images to their orignal orientations.
+% 	img = fliplr(img');
+% 	imgGlyphs = fliplr(imgGlyphs');
+
+%% Display the labeled image and polygons
+
+iPtsHigh = 100;
+iPtsLow = 20;
+
+mGlyphPolygons = zeros(iPtsLow*2,nGlyphs);
+vGlyphPolygons = cell(nGlyphs,1);
+for i = 1:nGlyphs
+
+	vGlyphPolygons{i,1} = vGlyphs{i,6};
+	%plot(iWidth-vGlyphPolygon(:,1), vGlyphPolygon(:,2), 'w', 'LineWidth', 2);
+
+	% Interpolate the polygon so that all glyphs have the same # of points
+	% Large interpolation (high point) - for display, etc.
+	vGlyphPolygons{i,2} = interppoly(vGlyphPolygons{i,1}, iPtsHigh);
+	% Small interpolation (low point) - for clustering
+	vGlyphPolygons{i,3} = interppoly(vGlyphPolygons{i,1}, iPtsLow+1);
+	vGlyphPolygons{i,3} = vGlyphPolygons{i,3}(1:end-1,:);
+
+	% Subtract the centroid to zero out polygons and allow analysis
+	vGPCenter = mean(vGlyphPolygons{i,3});
+	for j = 1:2
+		vGlyphPolygons{i,3}(:,j) = vGlyphPolygons{i,3}(:,j)-vGPCenter(j);
+	end
+	vGlyphPolygons{i,4} = vGPCenter;
+	
+	% Add a centered polyshape for use in exact distance calculations
+	vGlyphPolygons{i,5} = polyshape(vGlyphPolygons{i,2}(:,2)-vGPCenter(2), vGlyphPolygons{i,2}(:,1)-vGPCenter(1));
+
+	% Add the glyphs polygons to a big matrix
+	mGlyphPolygons(:,i) = vGlyphPolygons{i,3}(:);
+end
+
+% Transpose mGlyphPolygons so that they're oriented properly 
+% [Glyphs Points]
+tic
+mGlyphPolygons = mGlyphPolygons';
+toc
+mDist = polydist( vGlyphPolygons(:,5) );
+toc
+
+return;
+	
+%% Get average glyph width
+vWidths = zeros(nGlyphs,1);
+for i = 1:nGlyphs
+	vWidths(i) = max(vGlyphPolygons{i,1}(:,1))-min(vGlyphPolygons{i,1}(:,1));
+end
+fGlyphWidth = median(vWidths);
+
+
+%% Clustering
+
+iFig = 100;
+close all;
+
+
+nClusters = 64;
+X = mGlyphPolygons;
+iScale = 0.1;
+
+% Use some subset of PCs to create a clustering tree
+
+vDistMetrics = {
+	'euclidean'				% 1
+	'squaredeuclidean'		% 2
+	'seuclidean'			% 3
+	'cityblock'				% 4
+	'minkowski'				% 5
+	'chebychev'				% 6
+	'mahalanobis'			% 7
+	'cosine'				% 8
+	'correlation'			% 9
+	'spearman'				% 10
+	'hamming'				% 11
+	'jaccard'				% 12
+};
+
+vLinkMethods = {
+	'single'	% 1	nearest distance (default)
+	'complete'	% 2	furthest distance
+	'average' 	% 3	unweighted average distance (UPGMA) (also known as group average)
+	'weighted'	% 4	weighted average distance (WPGMA)
+	'centroid'	% 5	unweighted center of mass distance (UPGMC)
+	'median'	% 6	weighted center of mass distance (WPGMC)
+	'ward'		% 7	inner squared distance (min variance algorithm)
+};
+
+% Former method combos: (1,4), (1,3), (6,3), (8,5)
+for iDistMetric = 1%[ 1 2 4 5 8 9 ]
+
+% 		disp(vDRMethods{iDRMethod});
+
+% 		Y = pdist(X,vDistMetrics{iDistMetric});
+	Y = mDist;				% Brute force distance matrix
+
+	for iLinkMethod = 7%[ 3 4 5 6 ]
+
+		iFig = iFig+1;
+
+
+		%%%%% Cluster
+		Z = linkage(Y, vLinkMethods{iLinkMethod});
+		T = cluster(Z,'maxclust',nClusters);
+
+		% Sort clusters according to number of members and display the biggest first
+		nT = histc(T,1:nClusters);
+		[nT,iSortedClusters] = sort(nT,'descend');
+		
+
+% 		% Show clustered glyphs in situ
+% 		figure(iFig);
+% 		clf; hold on;
+% 
+% 		vColors = iris( nClusters );
+% 		for i = iSortedClusters'
+% 
+% 			iClusterGlyphs = find(T==i)';
+% 
+% 			for j = iClusterGlyphs
+% 				fill(vGlyphPolygons{j,2}(:,2), -vGlyphPolygons{j,2}(:,1), vColors(i,:));
+% 				plot(vGlyphPolygons{j,3}(:,2)+vGlyphPolygons{j,4}(2), -vGlyphPolygons{j,3}(:,1)-vGlyphPolygons{j,4}(1), '-', 'Color', [1 1 1]/2);
+% % 					text(vGlyphPolygons{j,4}(2),-vGlyphPolygons{j,4}(1), 1000, sprintf('%d',i),'Color',vColors(i,:),'BackgroundColor',[1 1 1]*7/8)
+% 			end
+% 
+% 		end
+% 		axis equal;
+% 		zoom on;
+% 		hold off;
+% 		getframe;
+% % 			zoom(4);
+% 		iEnd = nClusters;
+% 
+% % 			% Show clustered glyphs with first three dimensions
+% % 			figure(iFig+100);
+% % 			clf;
+% % 			hold on;
+% % 
+% % 			iEnd = nClusters;%5
+% % 			vColors = iris( iEnd );
+% % 			for i = 1:iEnd
+% % 				iCluster = iSortedClusters(i);
+% % 				iClusterGlyphs = find(T==iCluster)';
+% % 				for j = iClusterGlyphs
+% % % 					plot3d(vGlyphPolygons{j,3}(:,2)*iScale+X(j,1), -vGlyphPolygons{j,3}(:,1)*iScale+X(j,2), vGlyphPolygons{j,3}(:,1)*0 + X(j,3), '-', 'Color', vColors(i,:));
+% % 					fill3d(vGlyphPolygons{j,3}(:,2)*iScale+X(j,1), -vGlyphPolygons{j,3}(:,1)*iScale+X(j,2), vGlyphPolygons{j,3}(:,1)*0 + X(j,3), vColors(i,:));
+% % 					% 				text(X(j,1),X(j,2),X(j,3)+100, sprintf('%d',i),'Color',vColors(i,:),'BackgroundColor',[1 1 1]*7/8)
+% % 				end
+% % 				title(sprintf('Method No. %02i: %s', iDRMethod, vDRMethods{iDRMethod}));
+% % % 				axis equal;
+% % 				getframe;
+% % 			end
+% % 			hold off;
+% % 			getframe;
+% 
+% 		% Show glyphs overlaid in clusters
+% 		figure(iFig+200);
+% 		clf;
+% 
+% 		vColors = iris( iEnd );
+% 		for i = 1:iEnd
+% 			subplot(ceil(sqrt(nClusters)),ceil(sqrt(nClusters)),i);
+% 			hold on;
+% 			iCluster = iSortedClusters(i);
+% 			iClusterGlyphs = find(T==iCluster)';
+% 			for j = iClusterGlyphs
+% 				plot(vGlyphPolygons{j,2}(:,2)-vGlyphPolygons{j,4}(2), -vGlyphPolygons{j,2}(:,1)+vGlyphPolygons{j,4}(1), '-', 'Color', vColors(i,:));
+% 			end
+% 			hold off;
+% 			title(sprintf('Method No. %02i: %s', iDRMethod, vDRMethods{iDRMethod}));
+% % 				axis equal;
+% 			getframe;
+% 		end
+% 		hold off;
+% 
+% 		getframe;
+
+	end
+end
+
+
+%% Loop through clusters and format output
+
+for i = 1%:nClusters
+	iCluster = iSortedClusters(i);
+	
+	nGlyphsInClusternT(i)
+	iClusterGlyphs = find(T==iCluster);
+	
+	vClusterLineInstances = cell2mat( vGlyphs(iClusterGlyphs,3) );
+	vClusterLines = unique(vClusterLineInstances);
+	vNClustersPerLine = histc(vClusterLineInstances, vClusterLines)
+end
+
+
+
+
+
+
+
+
